@@ -1,0 +1,53 @@
+# ノードモジュール
+node_modules/
+node_modules/**
+
+# ビルドファイル
+artifacts/
+cache/
+dist/
+build/
+
+# 環境設定
+.env
+.env.*
+!.env.example
+docker-compose.override.yml
+
+# ログファイル
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# デプロイ情報
+deployment-*.json
+
+# 秘密情報
+config.js
+!config.example.js
+
+# 実際のABIファイル（サンプルABI以外）
+abis/*.json
+!abis/*.example.json
+
+# キャッシュ
+.hardhat/
+.DS_Store
+thumbs.db
+
+# オペレーティングシステム固有のファイル
+.DS_Store
+Thumbs.db
+
+# エディタ固有のファイル
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 取引レポートと統計情報
+profit-report-*.csv
+profit-statistics.json
+token-list.json
