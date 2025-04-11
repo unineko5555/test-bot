@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  arbitrage-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: arbitrage-bot
+    restart: unless-stopped
+    volumes:
+      # 設定ファイルとログの永続化
+      - ./config.js:/app/config.js:ro
+      - ./logs:/app/logs
+      - ./abis:/app/abis
+    environment:
+      - NODE_ENV=production
+      # 環境変数はここに追加（秘密鍵は.envファイル経由で設定することを推奨）
+      - RPC_URL=${RPC_URL}
+      - PRIVATE_KEY=${PRIVATE_KEY}
+      - CONTRACT_ADDRESS=${CONTRACT_ADDRESS}
+    networks:
+      - bot-network
+    # ヘルスチェック
+    healthcheck:
+      test: ["CMD", "node", "healthcheck.js"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  # シミュレーション実行用の別コンテナ（オプション）
+  simulation:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: arbitrage-simulation
+    command: ["node", "test-simulation.js"]
+    volumes:
+      - ./config.js:/app/config.js:ro
+      - ./abis:/app/abis
+    environment:
+      - NODE_ENV=test
+      - RPC_URL=${TEST_RPC_URL}
+    networks:
+      - bot-network
+    profiles:
+      - test
+
+networks:
+  bot-network:
+    driver: bridge

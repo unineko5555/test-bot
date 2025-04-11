@@ -1,0 +1,18 @@
+version: '3.8'
+
+# このファイルをdocker-compose.override.ymlにコピーし、環境に合わせて編集してください
+# 秘密情報を含むため、このファイルはGitで管理しないでください
+services:
+  arbitrage-bot:
+    environment:
+      # 実際の環境変数を設定してください
+      - RPC_URL=https://arbitrum-mainnet.infura.io/v3/your_infura_key
+      - PRIVATE_KEY=your_private_key
+      - CONTRACT_ADDRESS=0x1234567890123456789012345678901234567890
+      - USE_FLASHBOTS=true
+      - MIN_PROFIT_USD=5
+      - MIN_PROFIT_PERCENT=0.5
+      - MAX_GAS_PRICE=100
+      - SLIPPAGE_TOLERANCE=0.5
+      - MAX_EXECUTIONS_PER_HOUR=20
+      - LOG_LEVEL=info
