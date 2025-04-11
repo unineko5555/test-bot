@@ -134,6 +134,13 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
     }
     
     /**
+     * @dev パウズ状態の確認
+     */
+    function isPaused() external view returns (bool) {
+        return _paused;
+    }
+    
+    /**
      * @dev トークンペア間の最適なアービトラージ経路を探索し実行
      */
     function executeArbitrage(
@@ -142,6 +149,8 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
         uint256 amountIn,
         ArbitrageRoute calldata route
     ) external onlyOwner nonReentrant {
+        // フロントランニング対策: 取引期限を厳密に設定
+        require(block.timestamp - route.timestamp < 2 minutes, "Route too old, frontrunning risk");
         require(!_paused, "Contract is paused");
         require(tokenA != tokenB, "Same tokens");
         require(activePairs[tokenA][tokenB], "Pair not active");
@@ -254,6 +263,10 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
         uint256 initialBalance = IERC20(asset).balanceOf(address(this));
         require(initialBalance >= amount, "Insufficient loan received");
         
+        // 取引前にシミュレーションを実行して利益を確認
+        bool profitable = simulateArbitrage(asset, tokenB, amount, route);
+        require(profitable, "Simulation shows no profit");
+        
         // マルチホップスワップ実行
         bool success = executeSwaps(asset, tokenB, amount, route);
         
@@ -328,14 +341,17 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
             IERC20(currentToken).approve(address(dex.router), 0);
             IERC20(currentToken).approve(address(dex.router), currentAmount);
             
-            // スリッページ保護のための見積り計算
+            // スリッページ保護のための最低受け取り量を計算
             address[] memory tempPath = new address[](2);
             tempPath[0] = currentToken;
             tempPath[1] = nextToken;
             
+            uint256[] memory amountsOut = dex.router.getAmountsOut(currentAmount, tempPath);
+            uint256 minAmountOut = amountsOut[1] * (10000 - 50) / 10000; // 0.5%のスリッページ許容
+            
             try dex.router.swapExactTokensForTokens(
                 currentAmount,
-                0, // スリッページは事前計算で対応
+                minAmountOut, // 最低受け取り量を設定
                 tempPath,
                 address(this),
                 block.timestamp
@@ -391,9 +407,13 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
         
         uint256 preBalance = IERC20(toToken).balanceOf(address(this));
         
+        // スリッページ保護
+        uint256[] memory expectedAmounts = dex.router.getAmountsOut(amount, path);
+        uint256 minOut = expectedAmounts[1] * (10000 - 50) / 10000; // 0.5%のスリッページ許容
+        
         uint256[] memory amounts = dex.router.swapExactTokensForTokens(
             amount,
-            0,
+            minOut,
             path,
             address(this),
             block.timestamp
@@ -478,6 +498,95 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
      */
     function rescueETH() external onlyOwner {
         payable(owner()).transfer(address(this).balance);
+    }
+    
+    /**
+     * @dev 取引シミュレーション - 実際に実行せずに利益を計算
+     */
+    function simulateArbitrage(
+        address tokenA,
+        address tokenB,
+        uint256 amountIn,
+        ArbitrageRoute memory route
+    ) internal view returns (bool) {
+        address currentToken = tokenA;
+        uint256 currentAmount = amountIn;
+        uint256[] memory simulatedAmounts = new uint256[](route.path.length);
+        simulatedAmounts[0] = amountIn;
+        
+        // 各ホップのシミュレーション
+        for (uint i = 0; i < route.dexIndices.length; i++) {
+            uint8 dexIndex = route.dexIndices[i];
+            if (dexIndex >= dexRouters.length || !dexRouters[dexIndex].active) {
+                return false;
+            }
+            
+            address nextToken = route.path[i + 1];
+            DexRouter memory dex = dexRouters[dexIndex];
+            
+            // 取引シミュレーション
+            address[] memory tempPath = new address[](2);
+            tempPath[0] = currentToken;
+            tempPath[1] = nextToken;
+            
+            try dex.router.getAmountsOut(currentAmount, tempPath) returns (uint256[] memory amounts) {
+                if (amounts[1] == 0) return false;
+                currentAmount = amounts[1];
+                simulatedAmounts[i + 1] = currentAmount;
+                currentToken = nextToken;
+            } catch {
+                return false;
+            }
+        }
+        
+        // 利益計算
+        if (tokenA == tokenB) {
+            // ループ取引の場合
+            return currentAmount > amountIn && 
+                   currentAmount >= amountIn + (amountIn * minProfitPercent / 100000);
+        } else {
+            // 最終トークンを開始トークンに戻すシミュレーション
+            try getBestOutputForSwap(currentToken, tokenA, currentAmount) returns (uint256 finalAmount) {
+                uint256 totalDebt = amountIn; // フラッシュローン返済額
+                if (msg.sender == address(POOL)) {
+                    // プレミアム計算のシミュレーション (AAVEは通常0.09%)
+                    totalDebt = amountIn + (amountIn * 9 / 10000);
+                }
+                
+                return finalAmount > totalDebt && 
+                       finalAmount >= totalDebt + (amountIn * minProfitPercent / 100000);
+            } catch {
+                return false;
+            }
+        }
+    }
+    
+    /**
+     * @dev 最適な出力量を取得（シミュレーション用）
+     */
+    function getBestOutputForSwap(
+        address fromToken,
+        address toToken,
+        uint256 amount
+    ) internal view returns (uint256) {
+        uint256 bestOutput = 0;
+        
+        for (uint8 i = 0; i < dexRouters.length; i++) {
+            if (!dexRouters[i].active) continue;
+            
+            try dexRouters[i].router.getAmountsOut(
+                amount,
+                getPathForTokenToToken(fromToken, toToken)
+            ) returns (uint256[] memory amounts) {
+                if (amounts[amounts.length - 1] > bestOutput) {
+                    bestOutput = amounts[amounts.length - 1];
+                }
+            } catch {
+                continue;
+            }
+        }
+        
+        return bestOutput;
     }
     
     /**
