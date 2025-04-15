@@ -9,8 +9,7 @@ WORKDIR /app
 
 # パッケージの更新とセキュリティ強化
 RUN apk --no-cache upgrade && \
-    apk --no-cache add git curl bash python3 make g++ && \
-    npm install -g npm@latest
+    apk --no-cache add git curl bash python3 make g++
 
 # 依存関係の管理
 COPY package*.json ./
