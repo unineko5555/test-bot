@@ -29,28 +29,28 @@ const logger = winston.createLogger({
 // 設定
 const CONFIG = {
   // チェーン設定
-  chainId: 0, // 変更することを忘れないでください
-  chainName: 'Arbitrum Nova', // 変更することを忘れないでください
-  rpcUrl: 'YOUR_RPC_URL', // 変更することを忘れないでください
+  chainId: 11155111, // 変更することを忘れないでください
+  chainName: 'Sepolia', // 変更することを忘れないでください
+  rpcUrl: process.env.RPC_URL, // 変更することを忘れないでください
   
   // アカウント設定
-  privateKey: 'YOUR_PRIVATE_KEY', // 変更することを忘れないでください
+  privateKey: process.env.PRIVATE_KEY, // 変更することを忘れないでください
   
   // コントラクト設定
-  contractAddress: 'YOUR_CONTRACT_ADDRESS', // 変更することを忘れないでください
+  contractAddress: process.env.CONTRACT_ADDRESS, // 変更することを忘れないでください
   
   // DEX設定
   dexes: [
     {
       name: 'UniswapV2',
-      routerAddress: '0x...',
-      factoryAddress: '0x...',
+      routerAddress: '0xeE567Fe1712Faf6149d80dA1E6934E354124CfE3', //Sepoplia
+      factoryAddress: '0xF62c03E08ada871A0bEb309762E260a7a6a880E6', //Sepolia
       fee: 0.003, // 0.3%
     },
     {
-      name: 'SushiSwap',
-      routerAddress: '0x...',
-      factoryAddress: '0x...',
+      name: 'UniswapV3',
+      routerAddress: '0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD', //Sepolia
+      factoryAddress: '0x0227628f3F023bb0B980b67D528571c95c6DaC1c', //Sepolia
       fee: 0.003, // 0.3%
     }
     // 他のDEXを追加
@@ -60,20 +60,20 @@ const CONFIG = {
   baseTokens: [
     {
       symbol: 'WETH',
-      address: '0x...',
+      address: '0xfff9976782d46cc05630d1f6ebab18b2324d6b14', //Sepolia
       decimals: 18
     },
     {
       symbol: 'USDC',
-      address: '0x...',
+      address: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', //Sepolia
       decimals: 6
     }
     // 他のベーストークンを追加
   ],
   
   // トレーディング設定
-  minProfitUSD: 5, // 最低利益（USD）
-  minProfitPercent: 0.5, // 最低利益（%）
+  minProfitUSD: 1, // 最低利益（USD）
+  minProfitPercent: 0.1, // 最低利益（%）
   maxGasPrice: 100, // Gwei
   gasLimit: 1500000,
   slippageTolerance: 1, // 1%
@@ -88,11 +88,12 @@ const CONFIG = {
   executionCooldown: 30, // 秒
   
   // APIキー設定（価格取得用）
-  coinGeckoApiKey: 'YOUR_API_KEY', // オプション
+  coinGeckoApiKey: process.env.COIN_GECKO_API_KEY, // オプション
 };
 
 // ABIをJSONファイルから読み込み
 const loadAbi = (filename) => {
+  // filenameはファイル名のみを渡すこと（例: 'MultiDexArbitrageBot.json'）
   const filePath = path.join(__dirname, 'abis', filename);
   return JSON.parse(fs.readFileSync(filePath, 'utf8'));
 };
@@ -602,34 +603,31 @@ async function convertEthToToken(ethAmount, tokenAddress) {
 // トークンのUSD価格を取得
 async function getTokenPriceUSD(tokenAddress) {
   try {
-    // このサンプルでは簡易的に実装
-    // 実際には、CoinGecko APIやDEXからの価格取得を実装
-    
     // WETHの場合は固定価格を返す（テスト用）
     const wethAddress = CONFIG.baseTokens.find(t => t.symbol === 'WETH').address;
     if (tokenAddress.toLowerCase() === wethAddress.toLowerCase()) {
       return 2000; // ETH価格を仮定
     }
-    
+
     // USDCの場合
     const usdcAddress = CONFIG.baseTokens.find(t => t.symbol === 'USDC')?.address;
     if (usdcAddress && tokenAddress.toLowerCase() === usdcAddress.toLowerCase()) {
       return 1;
     }
-    
-    // その他のトークンは、WETHに対する価格から計算
-    const router = CONFIG.dexes[0].router;
-    const amountIn = ethers.utils.parseUnits('1', 18); // 1トークン
-    
-    const amountsOut = await router.getAmountsOut(
-      amountIn,
-      [tokenAddress, wethAddress]
-    );
-    
-    const ethPerToken = ethers.utils.formatEther(amountsOut[1]);
-    return parseFloat(ethPerToken) * 2000; // ETH価格を2000USDと仮定
+
+    // CoinGecko APIで価格取得
+    const apiKey = CONFIG.coinGeckoApiKey;
+    const url = `https://api.coingecko.com/api/v3/simple/token_price/ethereum?contract_addresses=${tokenAddress}&vs_currencies=usd${apiKey ? `&x_cg_pro_api_key=${apiKey}` : ''}`;
+    const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`CoinGecko API error: ${response.status}`);
+    const data = await response.json();
+    const price = data[tokenAddress.toLowerCase()]?.usd;
+    if (price) return price;
+    logger.warn(`CoinGecko price not found for ${tokenAddress}`);
+    return 0;
   } catch (error) {
-    logger.error('Error getting token price', { error: error.message });
+    logger.error('Error getting token price from CoinGecko', { error: error.message });
     return 0;
   }
 }

@@ -54,6 +54,8 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
     
     event DexAdded(string name, address router, address factory);
     event DexStatusChanged(string name, bool active);
+    event ParametersUpdated(uint256 minProfitPercent, uint256 maxGasPrice, uint256 minReserveRatio);
+    event RescueETH(address indexed to, uint256 amount);
     
     // DEXリスト
     DexRouter[] public dexRouters;
@@ -63,7 +65,7 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
     
     // 設定
     uint256 public minProfitPercent = 100; // 0.1% = 1/1000
-    uint256 public maxGasPrice = 100 gwei;
+    uint256 public maxGasPrice = 100 * 1e9; // 100 gwei
     uint256 public minReserveRatio = 20; // 2%
     
     // プロテクション
@@ -71,7 +73,7 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
     
     constructor(
         address _aaveLendingPoolAddressesProvider
-    ) FlashLoanSimpleReceiverBase(_aaveLendingPoolAddressesProvider) Ownable() ReentrancyGuard() {
+    ) FlashLoanSimpleReceiverBase(IPoolAddressesProvider(_aaveLendingPoolAddressesProvider)) Ownable() ReentrancyGuard() {
         _paused = false;
     }
     
@@ -124,6 +126,7 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
         minProfitPercent = _minProfitPercent;
         maxGasPrice = _maxGasPrice;
         minReserveRatio = _minReserveRatio;
+        emit ParametersUpdated(_minProfitPercent, _maxGasPrice, _minReserveRatio);
     }
     
     /**
@@ -149,8 +152,6 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
         uint256 amountIn,
         ArbitrageRoute calldata route
     ) external onlyOwner nonReentrant {
-        // フロントランニング対策: 取引期限を厳密に設定
-        require(block.timestamp - route.timestamp < 2 minutes, "Route too old, frontrunning risk");
         require(!_paused, "Contract is paused");
         require(tokenA != tokenB, "Same tokens");
         require(activePairs[tokenA][tokenB], "Pair not active");
@@ -192,14 +193,14 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
         // WETHにラップ
         address weth = dexRouters[0].router.WETH();
         // solhint-disable-next-line avoid-low-level-calls
-        (bool success,) = weth.call{value: amountIn}(abi.encodeWithSignature("deposit()"));
-        require(success, "ETH wrap failed");
+        (bool successCall,) = weth.call{value: amountIn}(abi.encodeWithSignature("deposit()"));
+        require(successCall, "ETH wrap failed");
         
         // マルチホップスワップ実行
         uint256 initialBalance = IERC20(tokenA).balanceOf(address(this));
-        bool success = executeSwaps(tokenA, tokenB, amountIn, route);
+        bool swapSuccess = executeSwaps(tokenA, tokenB, amountIn, route);
         
-        if (success) {
+        if (swapSuccess) {
             uint256 finalBalance = IERC20(tokenA).balanceOf(address(this));
             require(finalBalance > initialBalance, "No profit generated");
             uint256 profit = finalBalance - initialBalance;
@@ -271,32 +272,7 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
         bool success = executeSwaps(asset, tokenB, amount, route);
         
         if (success) {
-            // 最終残高確認
-            uint256 finalBalance = IERC20(asset).balanceOf(address(this));
-            require(finalBalance >= totalDebt, "Insufficient funds to repay");
-            
-            // 利益計算
-            uint256 profit = finalBalance - totalDebt;
-            uint256 minProfit = amount * minProfitPercent / 100000; // 例: 0.1%
-            
-            require(profit >= minProfit, "Profit below threshold");
-            
-            // フラッシュローン返済承認
-            IERC20(asset).approve(address(POOL), totalDebt);
-            
-            // 利益をオーナーに送信
-            if (profit > 0) {
-                IERC20(asset).transfer(owner(), profit);
-            }
-            
-            emit ArbitrageExecuted(
-                asset,
-                tokenB,
-                amount,
-                finalBalance,
-                profit,
-                block.timestamp
-            );
+            return _handleArbitrageSuccess(asset, tokenB, amount, totalDebt);
         } else {
             emit ArbitrageFailed(
                 asset,
@@ -306,6 +282,31 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
             );
         }
         
+        return true;
+    }
+
+    function _handleArbitrageSuccess(
+        address asset,
+        address tokenB,
+        uint256 amount,
+        uint256 totalDebt
+    ) internal returns (bool) {
+        uint256 finalBalance = IERC20(asset).balanceOf(address(this));
+        require(finalBalance >= totalDebt, "Insufficient funds to repay");
+        uint256 profit = finalBalance - totalDebt;
+        require(profit >= amount * minProfitPercent / 100000, "Profit below threshold");
+        IERC20(asset).approve(address(POOL), totalDebt);
+        if (profit > 0) {
+            IERC20(asset).transfer(owner(), profit);
+        }
+        emit ArbitrageExecuted(
+            asset,
+            tokenB,
+            amount,
+            finalBalance,
+            profit,
+            block.timestamp
+        );
         return true;
     }
     
@@ -337,9 +338,10 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
             // DEXごとに適切なスワップ方法を選択
             DexRouter memory dex = dexRouters[dexIndex];
             
-            // トークン承認
-            IERC20(currentToken).approve(address(dex.router), 0);
-            IERC20(currentToken).approve(address(dex.router), currentAmount);
+            // approveは必要な場合のみ
+            if (IERC20(currentToken).allowance(address(this), address(dex.router)) < currentAmount) {
+                IERC20(currentToken).approve(address(dex.router), type(uint256).max);
+            }
             
             // スリッページ保護のための最低受け取り量を計算
             address[] memory tempPath = new address[](2);
@@ -366,6 +368,7 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
                 currentToken = nextToken;
                 currentAmount = swappedAmount;
             } catch {
+                emit ArbitrageFailed(tokenA, tokenB, "Swap failed in executeSwaps", block.timestamp);
                 return false;
             }
         }
@@ -375,11 +378,12 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
             require(currentToken == tokenA, "Path does not form a loop");
         } else {
             // 最終トークンを開始トークンに戻す
-            try swapTokensBack(currentToken, tokenA, currentAmount) returns (uint256 finalAmount) {
-                currentAmount = finalAmount;
-            } catch {
+            (bool ok, uint256 finalAmount) = swapTokensBackSafe(currentToken, tokenA, currentAmount);
+            if (!ok) {
+                emit ArbitrageFailed(tokenA, tokenB, "SwapBack failed", block.timestamp);
                 return false;
             }
+            currentAmount = finalAmount;
         }
         
         return true;
@@ -421,6 +425,43 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
         
         uint256 postBalance = IERC20(toToken).balanceOf(address(this));
         return postBalance - preBalance;
+    }
+    
+    // try/catch不可のため、戻り値で成功判定するsafe関数を追加
+    function swapTokensBackSafe(
+        address fromToken,
+        address toToken,
+        uint256 amount
+    ) internal returns (bool, uint256) {
+        // 最適なDEXを検索
+        uint8 bestDexIndex = findBestDexForSwap(fromToken, toToken, amount);
+        DexRouter memory dex = dexRouters[bestDexIndex];
+        if (IERC20(fromToken).allowance(address(this), address(dex.router)) < amount) {
+            IERC20(fromToken).approve(address(dex.router), type(uint256).max);
+        }
+        address[] memory path = new address[](2);
+        path[0] = fromToken;
+        path[1] = toToken;
+        uint256 preBalance = IERC20(toToken).balanceOf(address(this));
+        uint256[] memory expectedAmounts;
+        try dex.router.getAmountsOut(amount, path) returns (uint256[] memory amounts) {
+            expectedAmounts = amounts;
+        } catch {
+            return (false, 0);
+        }
+        uint256 minOut = expectedAmounts[1] * (10000 - 50) / 10000;
+        try dex.router.swapExactTokensForTokens(
+            amount,
+            minOut,
+            path,
+            address(this),
+            block.timestamp
+        ) returns (uint256[] memory amounts) {
+            uint256 postBalance = IERC20(toToken).balanceOf(address(this));
+            return (true, postBalance - preBalance);
+        } catch {
+            return (false, 0);
+        }
     }
     
     /**
@@ -497,7 +538,10 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
      * @dev ネイティブコイン救出関数
      */
     function rescueETH() external onlyOwner {
-        payable(owner()).transfer(address(this).balance);
+        uint256 bal = address(this).balance;
+        (bool success, ) = payable(owner()).call{value: bal}("");
+        require(success, "ETH transfer failed");
+        emit RescueETH(owner(), bal);
     }
     
     /**
@@ -546,19 +590,42 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
                    currentAmount >= amountIn + (amountIn * minProfitPercent / 100000);
         } else {
             // 最終トークンを開始トークンに戻すシミュレーション
-            try getBestOutputForSwap(currentToken, tokenA, currentAmount) returns (uint256 finalAmount) {
-                uint256 totalDebt = amountIn; // フラッシュローン返済額
-                if (msg.sender == address(POOL)) {
-                    // プレミアム計算のシミュレーション (AAVEは通常0.09%)
-                    totalDebt = amountIn + (amountIn * 9 / 10000);
+            (bool ok, uint256 finalAmount) = getBestOutputForSwapSafe(currentToken, tokenA, currentAmount);
+            if (!ok) return false;
+            uint256 totalDebt = amountIn; // フラッシュローン返済額
+            if (msg.sender == address(POOL)) {
+                // プレミアム計算のシミュレーション (AAVEは通常0.09%)
+                totalDebt = amountIn + (amountIn * 9 / 10000);
+            }
+            
+            return finalAmount > totalDebt && 
+                   finalAmount >= totalDebt + (amountIn * minProfitPercent / 100000);
+        }
+    }
+    
+    // try/catch不可のため、戻り値で成功判定するsafe関数を追加
+    function getBestOutputForSwapSafe(
+        address fromToken,
+        address toToken,
+        uint256 amount
+    ) internal view returns (bool, uint256) {
+        uint256 bestOutput = 0;
+        bool found = false;
+        for (uint8 i = 0; i < dexRouters.length; i++) {
+            if (!dexRouters[i].active) continue;
+            try dexRouters[i].router.getAmountsOut(
+                amount,
+                getPathForTokenToToken(fromToken, toToken)
+            ) returns (uint256[] memory amounts) {
+                if (amounts[amounts.length - 1] > bestOutput) {
+                    bestOutput = amounts[amounts.length - 1];
+                    found = true;
                 }
-                
-                return finalAmount > totalDebt && 
-                       finalAmount >= totalDebt + (amountIn * minProfitPercent / 100000);
             } catch {
-                return false;
+                continue;
             }
         }
+        return (found, bestOutput);
     }
     
     /**
@@ -592,5 +659,6 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
     /**
      * @dev 受け取り失敗を防ぐためのフォールバック
      */
+    /// @dev コントラクトがETHを受け取るためのフォールバック関数
     receive() external payable {}
 }

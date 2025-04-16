@@ -13,19 +13,19 @@ async function main() {
   console.log(`Deployer address: ${deployer.address}`);
   console.log(`Deployer balance: ${ethers.utils.formatEther(await deployer.getBalance())} ETH`);
   
-  // AAVEレンディングプールアドレスプロバイダーの設定
+  // AAVE V3レンディングプールアドレスプロバイダーの設定
   // ネットワークに応じて正しいアドレスを使用すること
   let lendingPoolAddressesProvider;
   
   if (network.chainId === 1) {
     // イーサリアムメインネット
-    lendingPoolAddressesProvider = "0xB53C1a33016B2DC2fF3653530bfF1848a515c8c5";
+    lendingPoolAddressesProvider = "0x2f39d218133AFaB8F2B819B1066c7E434Ad94E9e";
   } else if (network.chainId === 42161) {
     // Arbitrum
     lendingPoolAddressesProvider = "0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb";
-  } else if (network.chainId === 5) {
-    // Goerli (テストネット)
-    lendingPoolAddressesProvider = "0x5E52dEc931FFb32f609681B8438A51c675cc232d";
+  } else if (network.chainId === 11155111) {
+    // Sepolia (テストネット)
+    lendingPoolAddressesProvider = "0x012bAC54348C0E635dCAc9D5FB99f06F24136C9A";
   } else {
     console.log("Warning: Unknown network, using default address provider");
     lendingPoolAddressesProvider = process.env.LENDING_POOL_ADDRESSES_PROVIDER;
@@ -74,8 +74,8 @@ async function main() {
     }
   }
   
-  // SushiSwap
-  let sushiswapRouter, sushiswapFactory;
+  // Uniswap V3
+  let uniswapV3Router, uniswapV3Factory;
   
   if (network.chainId === 1) {
     // イーサリアムメインネット
@@ -102,9 +102,10 @@ async function main() {
   // パラメータ設定
   console.log("Setting parameters...");
   try {
+// minProfitPercent, maxGasPrice, minReserveRatio の型・単位に注意
     await arbitrageBot.updateParameters(
-      100, // minProfitPercent: 0.1%
-      ethers.utils.parseUnits("100", "gwei"), // maxGasPrice
+      100, // minProfitPercent: 0.1%（コントラクト側の単位に合わせて整数で渡す）
+      ethers.BigNumber.from("100000000000"), // maxGasPrice: 100 * 1e9 (100 gwei)
       20 // minReserveRatio: 2%
     );
     console.log("Parameters updated");
@@ -131,17 +132,15 @@ async function main() {
         factory: uniswapFactory
       },
       {
-        name: "SushiSwap",
-        router: sushiswapRouter,
-        factory: sushiswapFactory
+        name: "UniswapV3",
+        router: uniswapV3Router,
+        factory: uniswapV3Factory
       }
     ]
   };
-  
-  fs.writeFileSync(
-    `deployment-${network.name}-${new Date().toISOString().replace(/:/g, '-')}.json`,
-    JSON.stringify(deployInfo, null, 2)
-  );
+  const outPath = `deployment-${network.name}-${new Date().toISOString().replace(/:/g, '-')}.json`;
+  fs.writeFileSync(outPath, JSON.stringify(deployInfo, null, 2));
+  console.log(`Deployment info saved to: ${outPath}`);
 }
 
 main()

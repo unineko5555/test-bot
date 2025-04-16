@@ -27,10 +27,10 @@ module.exports = {
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
       chainId: 42161
     },
-    goerli: {
+    sepolia: {
       url: process.env.TEST_RPC_URL || "",
       accounts: process.env.TEST_PRIVATE_KEY ? [process.env.TEST_PRIVATE_KEY] : [],
-      chainId: 5
+      chainId: 11155111
     }
   },
   paths: {
