@@ -22,6 +22,11 @@ module.exports = {
         blockNumber: 12345678 // 特定のブロック高でフォークする場合
       }
     },
+    mainnet: {
+      url: process.env.RPC_URL || "",
+      accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],
+      chainId: 1
+    },
     arbitrum: {
       url: process.env.RPC_URL || "",
       accounts: process.env.PRIVATE_KEY ? [process.env.PRIVATE_KEY] : [],

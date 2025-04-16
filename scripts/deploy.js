@@ -58,9 +58,14 @@ async function main() {
     uniswapFactory = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f";
   } else if (network.chainId === 42161) {
     // Arbitrum
-    uniswapRouter = "0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D"; // 正しいアドレスに更新する必要があります
-    uniswapFactory = "0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f"; // 正しいアドレスに更新する必要があります
+    uniswapRouter = "0x4752ba5dbc23f44d87826276bf6fd6b1c372ad24";
+    uniswapFactory = "0xf1D7CC64Fb4452F05c498126312eBE29f30Fbcf9"; 
+  } else if (network.chainId === 11155111) {
+    // Sepolia (テストネット)
+    uniswapRouter = "0xeE567Fe1712Faf6149d80dA1E6934E354124CfE3"; 
+    uniswapFactory = "0xF62c03E08ada871A0bEb309762E260a7a6a880E6"; 
   } else {
+    // その他のネットワークの場合、環境変数から取得
     uniswapRouter = process.env.UNISWAP_ROUTER;
     uniswapFactory = process.env.UNISWAP_FACTORY;
   }
@@ -79,23 +84,28 @@ async function main() {
   
   if (network.chainId === 1) {
     // イーサリアムメインネット
-    sushiswapRouter = "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F";
-    sushiswapFactory = "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac";
+    uniswapV3Router = "0xE592427A0AEce92De3Edee1F18E0157C05861564";
+    uniswapV3Factory = "0x1F98431c8aD98523631AE4a59f267346ea31F984";
   } else if (network.chainId === 42161) {
     // Arbitrum
-    sushiswapRouter = "0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F"; // 正しいアドレスに更新する必要があります
-    sushiswapFactory = "0xC0AEe478e3658e2610c5F7A4A2E1777cE9e4f2Ac"; // 正しいアドレスに更新する必要があります
+    uniswapV3Router = "0xE592427A0AEce92De3Edee1F18E0157C05861564"; 
+    uniswapV3Factory = "0x1F98431c8aD98523631AE4a59f267346ea31F984"; 
+  } else if (network.chainId === 11155111) {
+    // Sepolia (テストネット)
+    uniswapV3Router = ""; // 存在しない
+    uniswapV3Factory = "0x0227628f3F023bb0B980b67D528571c95c6DaC1c"; 
   } else {
-    sushiswapRouter = process.env.SUSHISWAP_ROUTER;
-    sushiswapFactory = process.env.SUSHISWAP_FACTORY;
+    // その他のネットワークの場合、環境変数から取得
+    uniswapV3Router = process.env.UNISWAP_V3_ROUTER;
+    uniswapV3Factory = process.env.UNISWAP_V3_FACTORY;
   }
   
-  if (sushiswapRouter && sushiswapFactory) {
+  if (uniswapV3Router && uniswapV3Factory) {
     try {
-      await arbitrageBot.addDex("SushiSwap", sushiswapRouter, sushiswapFactory);
-      console.log("Added SushiSwap");
+      await arbitrageBot.addDex("UniswapV3", uniswapV3Router, uniswapV3Factory);
+      console.log("Added UniswapV3");
     } catch (error) {
-      console.error("Failed to add SushiSwap:", error.message);
+      console.error("Failed to add UniswapV3:", error.message);
     }
   }
   

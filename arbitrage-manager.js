@@ -6,6 +6,8 @@ const fs = require('fs');
 const path = require('path');
 const winston = require('winston');
 
+require('dotenv').config();
+
 // ロギング設定
 const logger = winston.createLogger({
   level: 'info',
@@ -27,69 +29,7 @@ const logger = winston.createLogger({
 });
 
 // 設定
-const CONFIG = {
-  // チェーン設定
-  chainId: 11155111, // 変更することを忘れないでください
-  chainName: 'Sepolia', // 変更することを忘れないでください
-  rpcUrl: process.env.RPC_URL, // 変更することを忘れないでください
-  
-  // アカウント設定
-  privateKey: process.env.PRIVATE_KEY, // 変更することを忘れないでください
-  
-  // コントラクト設定
-  contractAddress: process.env.CONTRACT_ADDRESS, // 変更することを忘れないでください
-  
-  // DEX設定
-  dexes: [
-    {
-      name: 'UniswapV2',
-      routerAddress: '0xeE567Fe1712Faf6149d80dA1E6934E354124CfE3', //Sepoplia
-      factoryAddress: '0xF62c03E08ada871A0bEb309762E260a7a6a880E6', //Sepolia
-      fee: 0.003, // 0.3%
-    },
-    {
-      name: 'UniswapV3',
-      routerAddress: '0x3fC91A3afd70395Cd496C647d5a6CC9D4B2b7FAD', //Sepolia
-      factoryAddress: '0x0227628f3F023bb0B980b67D528571c95c6DaC1c', //Sepolia
-      fee: 0.003, // 0.3%
-    }
-    // 他のDEXを追加
-  ],
-  
-  // トークン設定
-  baseTokens: [
-    {
-      symbol: 'WETH',
-      address: '0xfff9976782d46cc05630d1f6ebab18b2324d6b14', //Sepolia
-      decimals: 18
-    },
-    {
-      symbol: 'USDC',
-      address: '0x1c7D4B196Cb0C7B01d743Fbc6116a902379C7238', //Sepolia
-      decimals: 6
-    }
-    // 他のベーストークンを追加
-  ],
-  
-  // トレーディング設定
-  minProfitUSD: 1, // 最低利益（USD）
-  minProfitPercent: 0.1, // 最低利益（%）
-  maxGasPrice: 100, // Gwei
-  gasLimit: 1500000,
-  slippageTolerance: 1, // 1%
-  
-  // 監視設定
-  pollingInterval: 1000, // ミリ秒
-  routeTimeout: 300, // 秒
-  maxHops: 3,
-  
-  // セキュリティ設定
-  maxExecutionsPerHour: 20,
-  executionCooldown: 30, // 秒
-  
-  // APIキー設定（価格取得用）
-  coinGeckoApiKey: process.env.COIN_GECKO_API_KEY, // オプション
-};
+const CONFIG = require('./config-mainnet.js');
 
 // ABIをJSONファイルから読み込み
 const loadAbi = (filename) => {
@@ -104,6 +44,7 @@ const UNISWAP_ROUTER_ABI = loadAbi('UniswapV2Router.json');
 const UNISWAP_FACTORY_ABI = loadAbi('UniswapV2Factory.json');
 const UNISWAP_PAIR_ABI = loadAbi('UniswapV2Pair.json');
 const ERC20_ABI = loadAbi('ERC20.json');
+const QUOTER_ABI = loadAbi('Quoter.json');
 
 // トークンリスト
 let tokenList = [];
@@ -114,6 +55,22 @@ let gasPrice = BigNumber.from('0');
 let provider;
 let wallet;
 let contract;
+
+// Slack通知用関数
+async function sendSlackNotification(message) {
+  const webhookUrl = process.env.SLACK_WEBHOOK_URL || CONFIG.slackWebhookUrl;
+  if (!webhookUrl) return;
+  try {
+    const fetch = (...args) => import('node-fetch').then(({default: fetch}) => fetch(...args));
+    await fetch(webhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: message })
+    });
+  } catch (e) {
+    logger.warn('Slack通知に失敗しました', { error: e.message });
+  }
+}
 
 // ボット初期化
 async function initializeBot() {
@@ -390,8 +347,8 @@ async function findBestArbitrageRoute(tokenA, tokenB) {
         if (tokenC.address === tokenA.address || tokenC.address === tokenB.address) continue;
         
         for (let i = 0; i < CONFIG.dexes.length; i++) {
-          for (let j = 0; j < CONFIG.dexes.length; j++) {
-            for (let k = 0; k < CONFIG.dexes.length; k++) {
+          for (let j = 0; i < CONFIG.dexes.length; j++) {
+            for (let k = 0; i < CONFIG.dexes.length; k++) {
               try {
                 const dex1 = CONFIG.dexes[i];
                 const dex2 = CONFIG.dexes[j];
@@ -523,6 +480,7 @@ async function executeArbitrage(opportunity) {
       route: opportunity.routeDescription,
       estimatedProfit: `${opportunity.estimatedProfitUSD.toFixed(2)}`
     });
+    await sendSlackNotification(`:moneybag: アービトラージ検知！\n${tokenA.symbol} <> ${tokenB.symbol}\nルート: ${opportunity.routeDescription}\n推定利益: $${opportunity.estimatedProfitUSD.toFixed(2)}`);
     
     // スマートコントラクトの呼び出し
     const tx = await contract.executeArbitrage(
@@ -555,15 +513,18 @@ async function executeArbitrage(opportunity) {
         profit: opportunity.estimatedProfitUSD,
         route: opportunity.routeDescription
       });
+      await sendSlackNotification(`:white_check_mark: アービトラージ成功！\nTx: <https://sepolia.etherscan.io/tx/${tx.hash}>\n利益: $${opportunity.estimatedProfitUSD.toFixed(2)}`);
       
       return true;
     } else {
       // 失敗
       logger.error(`Arbitrage failed: ${tx.hash}`);
+      await sendSlackNotification(`:x: アービトラージ失敗\nTx: <https://sepolia.etherscan.io/tx/${tx.hash}>`);
       return false;
     }
   } catch (error) {
     logger.error('Error executing arbitrage', { error: error.message });
+    await sendSlackNotification(`:warning: アービトラージ実行エラー: ${error.message}`);
     return false;
   }
 }
@@ -862,16 +823,73 @@ function generateProfitReport() {
   }
 }
 
+// DEXごとの各トークン価格を取得・ログ・Slack通知
+async function logAndNotifyDexTokenPrices() {
+  let msg = `*${CONFIG.chainName} 各DEXごとのWETH価格（USD換算）一覧*\n`;
+  const weth = CONFIG.baseTokens.find(t => t.symbol === 'WETH');
+  for (const dex of CONFIG.dexes) {
+    msg += `\n*${dex.name}*\n`;
+    for (const token of tokenList) {
+      if (!weth || weth.address.toLowerCase() === token.address.toLowerCase()) continue;
+      try {
+        // UniswapV3はQuoterで取得
+        if (dex.name === 'UniswapV3' && dex.quoterAddress && token.symbol === 'USDC') {
+          const quoter = new ethers.Contract(dex.quoterAddress, QUOTER_ABI, provider);
+          const amountIn = ethers.utils.parseUnits('1', weth.decimals);
+          const quoted = await quoter.quoteExactInputSingle(
+            weth.address,
+            token.address,
+            dex.fee,
+            amountIn,
+            0 // sqrtPriceLimitX96 = 0 で制限なし
+          );
+          const price = parseFloat(ethers.utils.formatUnits(quoted, token.decimals));
+          logger.info(`[${CONFIG.chainName}][${dex.name}] WETH price: $${price} (per 1 WETH)`);
+          msg += `• WETH price: $${price} (per 1 WETH)\n`;
+        } else if (token.symbol === 'USDC') {
+          // UniswapV2等は従来通り
+          const amountIn = ethers.utils.parseUnits('1', weth.decimals);
+          const amounts = await dex.router.getAmountsOut(amountIn, [weth.address, token.address]);
+          const price = parseFloat(ethers.utils.formatUnits(amounts[1], token.decimals));
+          logger.info(`[${CONFIG.chainName}][${dex.name}] WETH price: $${price} (per 1 WETH)`);
+          msg += `• WETH price: $${price} (per 1 WETH)\n`;
+        }
+      } catch (e) {
+        if (token.symbol === 'USDC') {
+          logger.warn(`[${CONFIG.chainName}][${dex.name}] WETH price取得失敗: ${e.message}`);
+          msg += `• WETH price: price取得失敗\n`;
+        }
+      }
+    }
+  }
+  await sendSlackNotification(msg);
+}
+
 // メインの実行関数
 async function startBot() {
   logger.info('Starting arbitrage bot...');
-  
+  await sendSlackNotification(':rocket: Arbitrage Botが起動しました');
+
   const initialized = await initializeBot();
   if (!initialized) {
     logger.error('Failed to initialize bot. Exiting...');
     return;
   }
-  
+
+  // 監視DEX・トークン情報をSlack通知
+  let dexMsg = '*監視DEX一覧*\n';
+  for (const dex of CONFIG.dexes) {
+    dexMsg += `• ${dex.name}\n  Router: \`${dex.routerAddress}\`\n  Factory: \`${dex.factoryAddress}\`\n`;
+  }
+  let tokenMsg = '*監視トークン一覧*\n';
+  for (const token of tokenList) {
+    tokenMsg += `• ${token.symbol} (${token.name || ''})\n  Address: \`${token.address}\`\n`;
+  }
+  await sendSlackNotification(`${dexMsg}\n${tokenMsg}`);
+
+  // DEXごとの各トークン価格をログ・Slack通知
+  await logAndNotifyDexTokenPrices();
+
   isRunning = true;
   schedulePeriodicTasks();
   
@@ -888,29 +906,29 @@ async function startBot() {
   }, timeUntilMidnight);
   
   logger.info('Bot started successfully. Monitoring for arbitrage opportunities...');
+  await sendSlackNotification(':mag: Arbitrage Botが監視を開始しました');
 }
 
 // ボットの停止
-function stopBot() {
+async function stopBot() {
   logger.info('Stopping arbitrage bot...');
   isRunning = false;
-  
   // 最終レポートを生成
   generateProfitReport();
-  
   logger.info('Bot stopped');
+  await sendSlackNotification(':stop_sign: Arbitrage Botが停止しました');
 }
 
 // プロセス終了時の処理
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   logger.info('Received SIGINT, shutting down gracefully...');
-  stopBot();
+  await stopBot();
   process.exit(0);
 });
 
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   logger.info('Received SIGTERM, shutting down gracefully...');
-  stopBot();
+  await stopBot();
   process.exit(0);
 });
 
