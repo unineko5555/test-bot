@@ -400,21 +400,17 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
         // 最適なDEXを検索
         uint8 bestDexIndex = findBestDexForSwap(fromToken, toToken, amount);
         DexRouter memory dex = dexRouters[bestDexIndex];
-        
-        // スワップ実行
-        IERC20(fromToken).approve(address(dex.router), 0);
-        IERC20(fromToken).approve(address(dex.router), amount);
-        
+        // approve(0)は省略しapprove(max)のみに
+        if (IERC20(fromToken).allowance(address(this), address(dex.router)) < amount) {
+            IERC20(fromToken).approve(address(dex.router), type(uint256).max);
+        }
         address[] memory path = new address[](2);
         path[0] = fromToken;
         path[1] = toToken;
-        
         uint256 preBalance = IERC20(toToken).balanceOf(address(this));
-        
         // スリッページ保護
         uint256[] memory expectedAmounts = dex.router.getAmountsOut(amount, path);
         uint256 minOut = expectedAmounts[1] * (10000 - 50) / 10000; // 0.5%のスリッページ許容
-        
         uint256[] memory amounts = dex.router.swapExactTokensForTokens(
             amount,
             minOut,
@@ -422,7 +418,6 @@ contract MultiDexArbitrageBot is FlashLoanSimpleReceiverBase, Ownable, Reentranc
             address(this),
             block.timestamp
         );
-        
         uint256 postBalance = IERC20(toToken).balanceOf(address(this));
         return postBalance - preBalance;
     }
