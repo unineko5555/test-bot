@@ -40,8 +40,18 @@ async function main() {
   // MultiDexArbitrageBotコントラクトのデプロイ
   console.log("Deploying MultiDexArbitrageBot...");
   const ArbitrageBot = await ethers.getContractFactory("MultiDexArbitrageBot");
+
+  // --- ガス見積もり追加 ---
+  const deployTx = ArbitrageBot.getDeployTransaction(lendingPoolAddressesProvider);
+  const estimatedGas = await deployer.estimateGas(deployTx);
+  const gasPrice = await ethers.provider.getGasPrice();
+  const ethNeeded = estimatedGas.mul(gasPrice);
+  console.log(`Estimated gas: ${estimatedGas.toString()} (gas)`);
+  console.log(`Gas price: ${ethers.utils.formatUnits(gasPrice, 'gwei')} Gwei`);
+  console.log(`Estimated ETH needed: ${ethers.utils.formatEther(ethNeeded)} ETH`);
+  // ---
+
   const arbitrageBot = await ArbitrageBot.deploy(lendingPoolAddressesProvider);
-  
   await arbitrageBot.deployed();
   console.log(`MultiDexArbitrageBot deployed to: ${arbitrageBot.address}`);
   
