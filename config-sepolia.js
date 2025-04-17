@@ -6,7 +6,7 @@ const CONFIG = {
   // チェーン設定
   chainId: 11155111, // Sepolia Testnet
   chainName: 'Sepolia',
-  rpcUrl: process.env.RPC_URL,
+  rpcUrl: process.env.TEST_RPC_URL,
   
   // アカウント設定
   privateKey: process.env.PRIVATE_KEY,
@@ -25,14 +25,14 @@ const CONFIG = {
       name: 'UniswapV2',
       routerAddress: '0xeE567Fe1712Faf6149d80dA1E6934E354124CfE3', //Sepolia用アドレス
       factoryAddress: '0xF62c03E08ada871A0bEb309762E260a7a6a880E6', // Sepolia用アドレス
-      fee: 0.003, // 0.3%
+      fee: 3000, // 0.3%
     },
     {
       name: 'UniswapV3',
       routerAddress: '', // 存在しない 
       factoryAddress: '0x0227628f3F023bb0B980b67D528571c95c6DaC1c', // Sepolia用アドレス
-      quoterAddress: '0x', // Sepolia用アドレス存在しない
-      fee: 0.003, // 0.3%
+      quoterAddress: '0xEd1f6473345F45b75F8179591dd5bA1888cf2FB3', // QuoterV2（Sepolia公式）
+      fee: 3000, // 0.3%
     }
     // 他のDEXを追加
   ],

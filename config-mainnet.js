@@ -25,14 +25,14 @@ const CONFIG = {
       name: 'UniswapV2',
       routerAddress: '0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D', // メインネット用アドレス
       factoryAddress: '0x5C69bEe701ef814a2B6a3EDD4B1652CB9cc5aA6f', // メインネット用アドレス
-      fee: 0.003, // 0.3%
+      fee: 3000, // 0.3%
     },
     {
       name: 'UniswapV3',
       routerAddress: '0xE592427A0AEce92De3Edee1F18E0157C05861564', // メインネット用アドレス
       factoryAddress: '0x1F98431c8aD98523631AE4a59f267346ea31F984', // メインネット用アドレス
-      quoterAddress: '0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6', // メインネット用アドレス
-      fee: 0.003, // 0.3%
+      quoterAddress: '0x61fFE014bA17989E743c5F6cB21bF9697530B21e', // QuoterV2（メインネット公式）
+      fee: 3000, // 0.3%
     }
     // 他のDEXを追加
   ],

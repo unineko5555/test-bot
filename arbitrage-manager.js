@@ -7,6 +7,8 @@ const path = require('path');
 const winston = require('winston');
 
 require('dotenv').config();
+const CONFIG = require('./config-mainnet.js');
+
 
 // ロギング設定
 const logger = winston.createLogger({
@@ -28,9 +30,6 @@ const logger = winston.createLogger({
   ],
 });
 
-// 設定
-const CONFIG = require('./config-mainnet.js');
-
 // ABIをJSONファイルから読み込み
 const loadAbi = (filename) => {
   // filenameはファイル名のみを渡すこと（例: 'MultiDexArbitrageBot.json'）
@@ -44,7 +43,7 @@ const UNISWAP_ROUTER_ABI = loadAbi('UniswapV2Router.json');
 const UNISWAP_FACTORY_ABI = loadAbi('UniswapV2Factory.json');
 const UNISWAP_PAIR_ABI = loadAbi('UniswapV2Pair.json');
 const ERC20_ABI = loadAbi('ERC20.json');
-const QUOTER_ABI = loadAbi('Quoter.json');
+const QUOTER_ABI = loadAbi('QuoterV2.json');
 
 // トークンリスト
 let tokenList = [];
@@ -836,14 +835,17 @@ async function logAndNotifyDexTokenPrices() {
         if (dex.name === 'UniswapV3' && dex.quoterAddress && token.symbol === 'USDC') {
           const quoter = new ethers.Contract(dex.quoterAddress, QUOTER_ABI, provider);
           const amountIn = ethers.utils.parseUnits('1', weth.decimals);
-          const quoted = await quoter.quoteExactInputSingle(
-            weth.address,
-            token.address,
-            dex.fee,
-            amountIn,
-            0 // sqrtPriceLimitX96 = 0 で制限なし
-          );
-          const price = parseFloat(ethers.utils.formatUnits(quoted, token.decimals));
+          // QuoterV2用のstruct引数で呼び出し
+          const params = {
+            tokenIn: weth.address,
+            tokenOut: token.address,
+            amountIn: amountIn,
+            fee: dex.fee,
+            sqrtPriceLimitX96: 0
+          };
+          const quotedResult = await quoter.quoteExactInputSingle(params);
+          // QuoterV2は複数返すので最初の値を使う
+          const price = parseFloat(ethers.utils.formatUnits(quotedResult.amountOut || quotedResult[0], token.decimals));
           logger.info(`[${CONFIG.chainName}][${dex.name}] WETH price: $${price} (per 1 WETH)`);
           msg += `• WETH price: $${price} (per 1 WETH)\n`;
         } else if (token.symbol === 'USDC') {
